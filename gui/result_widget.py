@@ -3,12 +3,13 @@ import json
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QScrollArea, QTableWidget, QTableWidgetItem,
-    QHeaderView, QTabWidget, QSplitter, QMessageBox
+    QHeaderView, QTabWidget, QSplitter, QMessageBox, QDialog, QTextEdit
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QPixmap
 
 from gui.styles import get_theme_colors
+from core.solution_engine import SolutionEngine
 
 class ResultWidget(QWidget):
     back_to_dashboard = pyqtSignal()
@@ -18,6 +19,7 @@ class ResultWidget(QWidget):
         super().__init__(parent)
         self.db = db
         self.extractor = extractor
+        self.solution_engine = SolutionEngine(self.db)
         self.attempt_data = {}
         self.questions = []
         self.user_answers = {}
@@ -269,6 +271,42 @@ class ResultWidget(QWidget):
         self.lbl_rev_summary.setStyleSheet("padding: 8px; border-radius: 6px;")
         self.rev_content_layout.addWidget(self.lbl_rev_summary)
 
+        # Personal Note Banner (if present)
+        self.lbl_rev_user_note = QLabel()
+        self.lbl_rev_user_note.setFont(QFont("Segoe UI", 10))
+        self.lbl_rev_user_note.setWordWrap(True)
+        self.lbl_rev_user_note.setStyleSheet("background: #fff3cd; color: #664d03; border: 1px solid #ffecb5; border-radius: 6px; padding: 6px 10px;")
+        self.lbl_rev_user_note.setVisible(False)
+        self.rev_content_layout.addWidget(self.lbl_rev_user_note)
+
+        # Separator line
+        self.sep_rev_sol = QFrame()
+        self.sep_rev_sol.setFrameShape(QFrame.Shape.HLine)
+        self.sep_rev_sol.setStyleSheet("color: #ced4da; margin: 4px 0;")
+        self.rev_content_layout.addWidget(self.sep_rev_sol)
+
+        # Detailed Solution Box Header
+        h_sol = QHBoxLayout()
+        self.lbl_rev_sol_title = QLabel("💡 Detailed Step-by-Step Solution & Concepts:")
+        self.lbl_rev_sol_title.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
+        self.lbl_rev_sol_title.setStyleSheet("color: #0d6efd;")
+        h_sol.addWidget(self.lbl_rev_sol_title)
+        h_sol.addStretch()
+
+        self.btn_rev_edit_note = QPushButton("✏️ Add / Edit My Note")
+        self.btn_rev_edit_note.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+        self.btn_rev_edit_note.setStyleSheet("background: #2563eb; color: #fff; border-radius: 4px; padding: 4px 10px;")
+        self.btn_rev_edit_note.clicked.connect(self._on_edit_review_note)
+        h_sol.addWidget(self.btn_rev_edit_note)
+        self.rev_content_layout.addLayout(h_sol)
+
+        # Detailed Solution Text (rich HTML)
+        self.lbl_rev_solution = QLabel()
+        self.lbl_rev_solution.setFont(QFont("Segoe UI", 10))
+        self.lbl_rev_solution.setWordWrap(True)
+        self.lbl_rev_solution.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.rev_content_layout.addWidget(self.lbl_rev_solution)
+
         self.rev_content_layout.addStretch()
         scroll.setWidget(w)
         layout.addWidget(scroll, 1)
@@ -433,6 +471,82 @@ class ResultWidget(QWidget):
         else:
             self.lbl_rev_summary.setText(f"❌ Your Answer: ({u_ans}) was Incorrect. Correct Answer: ({c_ans})")
             self.lbl_rev_summary.setStyleSheet("background: #f8d7da; color: #842029; border: 1px solid #f5c2c7;" if not self.is_dark else "background: #451820; color: #f87171; border: 1px solid #dc2626;")
+
+        # Personal Note Banner
+        note = q.get("user_notes", "")
+        if note and note.strip():
+            self.lbl_rev_user_note.setText(f"📝 <b>My Study Note:</b> {note.strip()}")
+            self.lbl_rev_user_note.setStyleSheet("background: #332b00; color: #fde047; border: 1px solid #854d0e; border-radius: 6px; padding: 6px 10px;" if self.is_dark else "background: #fff3cd; color: #664d03; border: 1px solid #ffecb5; border-radius: 6px; padding: 6px 10px;")
+            self.lbl_rev_user_note.setVisible(True)
+        else:
+            self.lbl_rev_user_note.setVisible(False)
+
+        # Detailed Solution Rendering
+        sol = self.solution_engine.get_solution(q)
+        en = sol.get("solution_en", "")
+        hi = sol.get("solution_hi", "")
+        c_th = get_theme_colors(self.is_dark)
+        if en and hi and en != hi:
+            sol_html = f"{en}<hr style='border: 0.5px solid {c_th['card_border']}; margin: 8px 0;'>{hi}"
+        else:
+            sol_html = en or hi
+        self.lbl_rev_solution.setText(sol_html)
+
+    def _on_edit_review_note(self):
+        selected_rows = self.table_review.selectionModel().selectedRows()
+        if not selected_rows:
+            return
+        row = selected_rows[0].row()
+        if row < 0 or row >= len(self.filtered_review_indices):
+            return
+
+        q_idx = self.filtered_review_indices[row]
+        q = self.questions[q_idx]
+        cur_note = q.get("user_notes", "") or ""
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Personal Study Note — Question #{q['qno']}")
+        dialog.resize(480, 260)
+        d_layout = QVBoxLayout(dialog)
+        d_layout.setContentsMargins(14, 12, 14, 12)
+        d_layout.setSpacing(10)
+
+        lbl = QLabel("Add your personal shortcut, mnemonic trick, or revision note:")
+        lbl.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        d_layout.addWidget(lbl)
+
+        txt = QTextEdit()
+        txt.setFont(QFont("Segoe UI", 10))
+        txt.setPlainText(cur_note)
+        txt.setPlaceholderText("e.g. Remember: SI formula SI = PRT/100, or trick for 10th 5-year plan...")
+        d_layout.addWidget(txt)
+
+        btn_h = QHBoxLayout()
+        btn_h.addStretch()
+        btn_cancel = QPushButton("Cancel")
+        btn_cancel.clicked.connect(dialog.reject)
+        btn_save = QPushButton("💾 Save Note")
+        btn_save.setStyleSheet("background: #198754; color: #fff; font-weight: bold; border-radius: 6px; padding: 6px 14px;")
+
+        def do_save():
+            new_text = txt.toPlainText().strip()
+            shift_id = q.get("shift_id", self.attempt_data.get("shift_id", 1))
+            self.db.save_user_note(shift_id, q["qno"], new_text)
+            q["user_notes"] = new_text
+            if new_text:
+                self.lbl_rev_user_note.setText(f"📝 <b>My Study Note:</b> {new_text}")
+                self.lbl_rev_user_note.setStyleSheet("background: #332b00; color: #fde047; border: 1px solid #854d0e; border-radius: 6px; padding: 6px 10px;" if self.is_dark else "background: #fff3cd; color: #664d03; border: 1px solid #ffecb5; border-radius: 6px; padding: 6px 10px;")
+                self.lbl_rev_user_note.setVisible(True)
+            else:
+                self.lbl_rev_user_note.setVisible(False)
+            dialog.accept()
+
+        btn_save.clicked.connect(do_save)
+        btn_h.addWidget(btn_cancel)
+        btn_h.addWidget(btn_save)
+        d_layout.addLayout(btn_h)
+        dialog.exec()
+
 
     def set_dark_mode(self, is_dark):
         self.is_dark = is_dark

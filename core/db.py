@@ -98,6 +98,21 @@ class ExamDB:
                 value TEXT
             )
             """)
+
+            # Version 2 Schema Migration: Add solution & user note columns if missing
+            cur.execute("PRAGMA table_info(questions)")
+            cols = [r["name"] for r in cur.fetchall()]
+            if "solution_en" not in cols:
+                cur.execute("ALTER TABLE questions ADD COLUMN solution_en TEXT")
+            if "solution_hi" not in cols:
+                cur.execute("ALTER TABLE questions ADD COLUMN solution_hi TEXT")
+            if "solution_steps" not in cols:
+                cur.execute("ALTER TABLE questions ADD COLUMN solution_steps TEXT")
+            if "solution_source" not in cols:
+                cur.execute("ALTER TABLE questions ADD COLUMN solution_source TEXT")
+            if "user_notes" not in cols:
+                cur.execute("ALTER TABLE questions ADD COLUMN user_notes TEXT")
+
             conn.commit()
 
     def populate_shifts(self, shifts):
@@ -189,6 +204,8 @@ class ExamDB:
                 d["images"] = json.loads(d["images_json"]) if d.get("images_json") else []
                 results.append(d)
             return results
+
+    get_questions_by_shift = get_shift_questions
 
     def get_questions_by_subject(self, subject, limit=50):
         with self.get_connection() as conn:
@@ -330,3 +347,62 @@ class ExamDB:
             ON CONFLICT(key) DO UPDATE SET value = excluded.value
             """, (key, str(value)))
             conn.commit()
+
+    def update_question_solution(self, shift_id, qno, solution_en, solution_hi="", solution_steps=None, solution_source="auto"):
+        steps_json = json.dumps(solution_steps) if solution_steps else ""
+        with self.get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+            UPDATE questions
+            SET solution_en = ?, solution_hi = ?, solution_steps = ?, solution_source = ?
+            WHERE shift_id = ? AND qno = ?
+            """, (solution_en, solution_hi, steps_json, solution_source, shift_id, qno))
+            conn.commit()
+
+    def save_user_note(self, shift_id, qno, note):
+        with self.get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+            UPDATE questions
+            SET user_notes = ?
+            WHERE shift_id = ? AND qno = ?
+            """, (note, shift_id, qno))
+            conn.commit()
+
+    def get_question(self, shift_id, qno):
+        with self.get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM questions WHERE shift_id = ? AND qno = ?", (shift_id, qno))
+            row = cur.fetchone()
+            if not row:
+                return None
+            d = dict(row)
+            d["images"] = json.loads(d["images_json"]) if d.get("images_json") else []
+            d["solution_steps"] = json.loads(d["solution_steps"]) if d.get("solution_steps") else []
+            return d
+
+    def search_questions(self, query, subject=None, limit=50):
+        with self.get_connection() as conn:
+            cur = conn.cursor()
+            q_like = f"%{query}%"
+            if subject and subject != "All Subjects":
+                cur.execute("""
+                SELECT * FROM questions
+                WHERE (question_en LIKE ? OR question_hi LIKE ? OR question_full LIKE ?)
+                  AND subject LIKE ?
+                ORDER BY shift_id ASC, qno ASC LIMIT ?
+                """, (q_like, q_like, q_like, f"%{subject}%", limit))
+            else:
+                cur.execute("""
+                SELECT * FROM questions
+                WHERE question_en LIKE ? OR question_hi LIKE ? OR question_full LIKE ?
+                ORDER BY shift_id ASC, qno ASC LIMIT ?
+                """, (q_like, q_like, q_like, limit))
+            rows = cur.fetchall()
+            results = []
+            for r in rows:
+                d = dict(r)
+                d["images"] = json.loads(d["images_json"]) if d.get("images_json") else []
+                d["solution_steps"] = json.loads(d["solution_steps"]) if d.get("solution_steps") else []
+                results.append(d)
+            return results

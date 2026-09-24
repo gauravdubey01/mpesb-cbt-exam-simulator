@@ -1,12 +1,14 @@
 import os
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QScrollArea, QGridLayout, QComboBox, QMessageBox, QDialog
+    QFrame, QScrollArea, QGridLayout, QComboBox, QMessageBox, QDialog,
+    QTextEdit
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QPixmap
 
 from gui.styles import get_theme_colors
+from core.solution_engine import SolutionEngine
 
 class PracticeWidget(QWidget):
     exit_to_dashboard = pyqtSignal()
@@ -15,6 +17,7 @@ class PracticeWidget(QWidget):
         super().__init__(parent)
         self.db = db
         self.extractor = extractor
+        self.solution_engine = SolutionEngine(self.db)
         self.questions = []
         self.filtered_questions = []
         self.current_q_idx = 0
@@ -170,8 +173,11 @@ class PracticeWidget(QWidget):
 
         # Feedback / Explanation Card
         self.feedback_card = QFrame()
-        self.feedback_card.setStyleSheet("background: #f8f9fa; border: 1.5px solid #e9ecef; border-radius: 8px; padding: 10px;")
+        self.feedback_card.setStyleSheet("background: #f8f9fa; border: 1.5px solid #e9ecef; border-radius: 8px; padding: 12px;")
         self.feedback_layout = QVBoxLayout(self.feedback_card)
+        self.feedback_layout.setSpacing(8)
+
+        # Status & Answer Header
         self.lbl_feedback_status = QLabel()
         self.lbl_feedback_status.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
         self.feedback_layout.addWidget(self.lbl_feedback_status)
@@ -180,6 +186,42 @@ class PracticeWidget(QWidget):
         self.lbl_correct_reveal.setFont(QFont("Segoe UI", 11))
         self.lbl_correct_reveal.setWordWrap(True)
         self.feedback_layout.addWidget(self.lbl_correct_reveal)
+
+        # Personal Note Banner (if present)
+        self.lbl_user_note_banner = QLabel()
+        self.lbl_user_note_banner.setFont(QFont("Segoe UI", 10))
+        self.lbl_user_note_banner.setWordWrap(True)
+        self.lbl_user_note_banner.setStyleSheet("background: #fff3cd; color: #664d03; border: 1px solid #ffecb5; border-radius: 6px; padding: 6px 10px;")
+        self.lbl_user_note_banner.setVisible(False)
+        self.feedback_layout.addWidget(self.lbl_user_note_banner)
+
+        # Separator line
+        self.sep_sol = QFrame()
+        self.sep_sol.setFrameShape(QFrame.Shape.HLine)
+        self.sep_sol.setStyleSheet("color: #ced4da; margin: 4px 0;")
+        self.feedback_layout.addWidget(self.sep_sol)
+
+        # Detailed Solution Box Header
+        h_sol = QHBoxLayout()
+        self.lbl_sol_title = QLabel("💡 Detailed Step-by-Step Solution & Concepts:")
+        self.lbl_sol_title.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
+        self.lbl_sol_title.setStyleSheet("color: #0d6efd;")
+        h_sol.addWidget(self.lbl_sol_title)
+        h_sol.addStretch()
+
+        self.btn_edit_note = QPushButton("✏️ Add / Edit My Note")
+        self.btn_edit_note.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+        self.btn_edit_note.setStyleSheet("background: #2563eb; color: #fff; border-radius: 4px; padding: 4px 10px;")
+        self.btn_edit_note.clicked.connect(self._on_edit_note)
+        h_sol.addWidget(self.btn_edit_note)
+        self.feedback_layout.addLayout(h_sol)
+
+        # Detailed Solution Text (rich HTML)
+        self.lbl_solution_text = QLabel()
+        self.lbl_solution_text.setFont(QFont("Segoe UI", 10))
+        self.lbl_solution_text.setWordWrap(True)
+        self.lbl_solution_text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.feedback_layout.addWidget(self.lbl_solution_text)
 
         self.feedback_card.setVisible(False)
         c_layout.addWidget(self.feedback_card)
@@ -378,16 +420,84 @@ class PracticeWidget(QWidget):
             else:
                 card.setStyleSheet(f"border: 1.5px solid {c['card_border']}; border-radius: 8px; background: {c['card_bg']}; padding: 8px;")
 
-        self.feedback_card.setStyleSheet(f"background: {c['card_bg']}; border: 1.5px solid {c['card_border']}; border-radius: 8px; padding: 10px;")
+        self.feedback_card.setStyleSheet(f"background: {c['card_bg']}; border: 1.5px solid {c['card_border']}; border-radius: 8px; padding: 12px;")
         self.feedback_card.setVisible(True)
         if chosen == corr:
-            self.lbl_feedback_status.setText("✅ Correct Answer!")
+            self.lbl_feedback_status.setText("✅ Correct Answer! (+1.00 Marks)")
             self.lbl_feedback_status.setStyleSheet("color: #16a34a;")
         else:
-            self.lbl_feedback_status.setText("❌ Incorrect Response")
+            self.lbl_feedback_status.setText(f"❌ Incorrect Response (You selected Option {chosen})")
             self.lbl_feedback_status.setStyleSheet("color: #dc2626;")
 
-        self.lbl_correct_reveal.setText(f"Official Answer Key: Option ({corr})\nSubject: {q.get('subject', 'General')}")
+        self.lbl_correct_reveal.setText(f"Official Answer Key: Option ({corr})  |  Subject: {q.get('subject', 'General')}")
+        self.lbl_correct_reveal.setStyleSheet(f"color: {c['text_muted']}; font-weight: 600;")
+
+        # User Note Banner
+        note = q.get("user_notes", "")
+        if note and note.strip():
+            self.lbl_user_note_banner.setText(f"📝 <b>My Study Note:</b> {note.strip()}")
+            self.lbl_user_note_banner.setStyleSheet("background: #332b00; color: #fde047; border: 1px solid #854d0e; border-radius: 6px; padding: 6px 10px;" if self.is_dark else "background: #fff3cd; color: #664d03; border: 1px solid #ffecb5; border-radius: 6px; padding: 6px 10px;")
+            self.lbl_user_note_banner.setVisible(True)
+        else:
+            self.lbl_user_note_banner.setVisible(False)
+
+        # Detailed Solution Rendering
+        sol = self.solution_engine.get_solution(q)
+        en = sol.get("solution_en", "")
+        hi = sol.get("solution_hi", "")
+        if self.lang_mode == "en":
+            sol_html = en or hi
+        elif self.lang_mode == "hi":
+            sol_html = hi or en
+        else:
+            sol_html = f"{en}<hr style='border: 0.5px solid {c['card_border']}; margin: 8px 0;'>{hi}" if en and hi and en != hi else (en or hi)
+        self.lbl_solution_text.setText(sol_html)
+
+    def _on_edit_note(self):
+        q = self.filtered_questions[self.current_q_idx]
+        cur_note = q.get("user_notes", "") or ""
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Personal Study Note — Question #{q['qno']}")
+        dialog.resize(480, 260)
+        d_layout = QVBoxLayout(dialog)
+        d_layout.setContentsMargins(14, 12, 14, 12)
+        d_layout.setSpacing(10)
+
+        lbl = QLabel("Add your personal shortcut, mnemonic trick, or revision note:")
+        lbl.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        d_layout.addWidget(lbl)
+
+        txt = QTextEdit()
+        txt.setFont(QFont("Segoe UI", 10))
+        txt.setPlainText(cur_note)
+        txt.setPlaceholderText("e.g. Remember: SI formula SI = PRT/100, or trick for 10th 5-year plan...")
+        d_layout.addWidget(txt)
+
+        btn_h = QHBoxLayout()
+        btn_h.addStretch()
+        btn_cancel = QPushButton("Cancel")
+        btn_cancel.clicked.connect(dialog.reject)
+        btn_save = QPushButton("💾 Save Note")
+        btn_save.setStyleSheet("background: #16a34a; color: #fff; font-weight: bold; border-radius: 6px; padding: 6px 16px;")
+
+        def save():
+            new_note = txt.toPlainText().strip()
+            sh_id = q.get("shift_id", self.shift_info.get("shift_index", 1))
+            self.db.save_user_note(sh_id, q["qno"], new_note)
+            q["user_notes"] = new_note
+            if new_note:
+                self.lbl_user_note_banner.setText(f"📝 <b>My Study Note:</b> {new_note}")
+                self.lbl_user_note_banner.setStyleSheet("background: #332b00; color: #fde047; border: 1px solid #854d0e; border-radius: 6px; padding: 6px 10px;" if self.is_dark else "background: #fff3cd; color: #664d03; border: 1px solid #ffecb5; border-radius: 6px; padding: 6px 10px;")
+                self.lbl_user_note_banner.setVisible(True)
+            else:
+                self.lbl_user_note_banner.setVisible(False)
+            dialog.accept()
+
+        btn_save.clicked.connect(save)
+        btn_h.addWidget(btn_cancel)
+        btn_h.addWidget(btn_save)
+        d_layout.addLayout(btn_h)
+        dialog.exec()
 
     def set_dark_mode(self, is_dark):
         self.is_dark = is_dark

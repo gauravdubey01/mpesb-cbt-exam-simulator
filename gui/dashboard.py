@@ -3,10 +3,14 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QScrollArea, QTableWidget, QTableWidgetItem,
     QHeaderView, QTabWidget, QLineEdit, QComboBox, QSpinBox,
-    QMessageBox, QGridLayout
+    QMessageBox, QGridLayout, QFileDialog, QDialog, QTextEdit
 )
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QPixmap
+
+from core.solution_engine import SolutionEngine
+from core.pdf_exporter import PDFExporter
+from gui.styles import get_theme_colors
 
 class DashboardWidget(QWidget):
     start_exam_mode = pyqtSignal(dict)      # emits shift_info
@@ -18,6 +22,10 @@ class DashboardWidget(QWidget):
         super().__init__(parent)
         self.db = db
         self.shifts = []
+        self.solution_engine = SolutionEngine(self.db)
+        self.pdf_exporter = PDFExporter(self.db, self.solution_engine)
+        self.search_results = []
+        self.is_dark = False
 
         self._init_ui()
 
@@ -53,6 +61,10 @@ class DashboardWidget(QWidget):
         # Tab 4: Bookmarks
         tab_bookmarks = self._create_bookmarks_tab()
         self.tabs.addTab(tab_bookmarks, "★ Saved Bookmarks")
+
+        # Tab 5: Question Bank & Solutions Hub
+        tab_solutions = self._create_solutions_tab()
+        self.tabs.addTab(tab_solutions, "📚 Solutions & Question Bank")
 
         main_layout.addWidget(self.tabs, 1)
 
@@ -321,6 +333,373 @@ class DashboardWidget(QWidget):
         return w
 
     # -------------------------------------------------------------
+    # Tab 5: Question Bank & Solutions Hub
+    # -------------------------------------------------------------
+    def _create_solutions_tab(self):
+        w = QWidget()
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(10)
+
+        # Search Bar and Filters
+        filter_bar = QHBoxLayout()
+        filter_bar.setSpacing(10)
+
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("🔍 Search across 14,000 questions (e.g. 'Simple Interest', 'अनुच्छेद', 'RAM', 'Profit')...")
+        self.search_input.setFixedHeight(36)
+        self.search_input.returnPressed.connect(self._on_search_questions)
+        filter_bar.addWidget(self.search_input, 2)
+
+        self.search_subject_combo = QComboBox()
+        self.search_subject_combo.setFixedHeight(36)
+        self.search_subject_combo.addItems([
+            "All Subjects",
+            "General Knowledge",
+            "General English",
+            "General Hindi",
+            "General Mathematics",
+            "General Reasoning",
+            "General Science",
+            "General Management",
+            "Computer Proficiency",
+        ])
+        self.search_subject_combo.currentIndexChanged.connect(self._on_search_questions)
+        filter_bar.addWidget(self.search_subject_combo, 1)
+
+        btn_search = QPushButton("🔍 Search")
+        btn_search.setFixedHeight(36)
+        btn_search.setStyleSheet("background: #0d6efd; color: #fff; font-weight: bold; border-radius: 6px; padding: 0 16px;")
+        btn_search.clicked.connect(self._on_search_questions)
+        filter_bar.addWidget(btn_search)
+
+        self.btn_export_pdf = QPushButton("📄 Export PDF with Solutions")
+        self.btn_export_pdf.setFixedHeight(36)
+        self.btn_export_pdf.setStyleSheet("background: #198754; color: #fff; font-weight: bold; border-radius: 6px; padding: 0 16px;")
+        self.btn_export_pdf.clicked.connect(self._on_export_pdf_solutions)
+        filter_bar.addWidget(self.btn_export_pdf)
+
+        layout.addLayout(filter_bar)
+
+        # Status text
+        self.lbl_search_status = QLabel("Enter keywords to search official questions and view step-by-step solutions.")
+        self.lbl_search_status.setStyleSheet("color: #6c757d; font-size: 11px;")
+        layout.addWidget(self.lbl_search_status)
+
+        # Results Table
+        self.table_search = QTableWidget()
+        self.table_search.setColumnCount(7)
+        self.table_search.setHorizontalHeaderLabels([
+            "Shift", "Q#", "Subject", "Question Preview", "Ans Key", "Notes", "Action"
+        ])
+        self.table_search.verticalHeader().setDefaultSectionSize(44)
+        self.table_search.verticalHeader().setVisible(False)
+        self.table_search.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self.table_search.setColumnWidth(0, 70)
+        self.table_search.setColumnWidth(1, 55)
+        self.table_search.setColumnWidth(2, 150)
+        self.table_search.setColumnWidth(4, 75)
+        self.table_search.setColumnWidth(5, 75)
+        self.table_search.setColumnWidth(6, 140)
+        self.table_search.setAlternatingRowColors(True)
+        layout.addWidget(self.table_search, 1)
+
+        return w
+
+    def _on_search_questions(self):
+        query = self.search_input.text().strip()
+        sub = self.search_subject_combo.currentText()
+        if sub == "All Subjects":
+            sub_filter = None
+        elif sub == "General Knowledge":
+            sub_filter = "Knowledge"
+        elif sub == "General English":
+            sub_filter = "English"
+        elif sub == "General Hindi":
+            sub_filter = "Hindi"
+        elif sub == "General Mathematics":
+            sub_filter = "Maths"
+        elif sub == "General Reasoning":
+            sub_filter = "Reasoning"
+        elif sub == "General Science":
+            sub_filter = "Science"
+        elif sub == "General Management":
+            sub_filter = "Management"
+        elif sub == "Computer Proficiency":
+            sub_filter = "Computer"
+        else:
+            sub_filter = None
+
+        results = self.db.search_questions(query, subject=sub_filter, limit=100)
+        self.search_results = results
+        self.lbl_search_status.setText(f"Found {len(results)} matching questions in Question Bank.")
+
+        self.table_search.setRowCount(len(results))
+        for row, q in enumerate(results):
+            self.table_search.setItem(row, 0, QTableWidgetItem(f"Shift {q.get('shift_id', 1)}"))
+            self.table_search.setItem(row, 1, QTableWidgetItem(f"Q.{q.get('qno', 1)}"))
+            self.table_search.setItem(row, 2, QTableWidgetItem(q.get("subject", "General")))
+
+            prev = q.get("question_en") or q.get("question_hi") or q.get("question_full", "")
+            prev = " ".join(prev.split())
+            if len(prev) > 85:
+                prev = prev[:85] + "..."
+            self.table_search.setItem(row, 3, QTableWidgetItem(prev))
+
+            corr_item = QTableWidgetItem(f"Option {q.get('correct_ans', '')}")
+            corr_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.table_search.setItem(row, 4, corr_item)
+
+            has_note = "📝 Note" if q.get("user_notes") else "-"
+            note_item = QTableWidgetItem(has_note)
+            note_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.table_search.setItem(row, 5, note_item)
+
+            btn_sol = QPushButton("💡 View Solution")
+            btn_sol.setFixedHeight(30)
+            btn_sol.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn_sol.setStyleSheet("""
+                QPushButton {
+                    background-color: #0d6efd;
+                    color: #ffffff;
+                    font-weight: bold;
+                    border-radius: 5px;
+                    border: none;
+                    padding: 4px 10px;
+                    font-size: 11px;
+                }
+                QPushButton:hover { background-color: #0b5ed7; }
+            """)
+            btn_sol.clicked.connect(lambda ch, item=q: self._on_inspect_question_solution(item))
+            self.table_search.setCellWidget(row, 6, self._create_cell_button_widget(btn_sol))
+
+    def _on_inspect_question_solution(self, q):
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Detailed Solution — Shift {q.get('shift_id')} Q.{q.get('qno')} [{q.get('subject')}]")
+        dialog.resize(720, 620)
+
+        c = get_theme_colors(self.is_dark)
+
+        d_layout = QVBoxLayout(dialog)
+        d_layout.setContentsMargins(14, 12, 14, 12)
+        d_layout.setSpacing(10)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; }")
+
+        w = QWidget()
+        c_layout = QVBoxLayout(w)
+        c_layout.setSpacing(10)
+
+        # Title
+        lbl_head = QLabel(f"Shift #{q.get('shift_id')} • Question #{q.get('qno')} — {q.get('subject', 'General')}")
+        lbl_head.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        lbl_head.setStyleSheet("color: #0d6efd;")
+        c_layout.addWidget(lbl_head)
+
+        # Question Frame
+        q_frame = QFrame()
+        q_frame.setStyleSheet(f"background: {c['card_bg']}; border: 1px solid {c['card_border']}; border-radius: 8px; padding: 12px;")
+        q_box = QVBoxLayout(q_frame)
+        q_box.setSpacing(8)
+
+        en = q.get("question_en", "")
+        hi = q.get("question_hi", "")
+        full = q.get("question_full", "")
+        q_text = f"{en}\n\n{hi}" if en and hi and en != hi else (en or hi or full)
+
+        lbl_q = QLabel(q_text)
+        lbl_q.setFont(QFont("Segoe UI", 11))
+        lbl_q.setWordWrap(True)
+        lbl_q.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        q_box.addWidget(lbl_q)
+
+        # Image if available
+        imgs = q.get("images", [])
+        if imgs and os.path.exists(imgs[0]):
+            lbl_img = QLabel()
+            lbl_img.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            pix = QPixmap(imgs[0])
+            lbl_img.setPixmap(pix.scaledToWidth(min(520, pix.width()), Qt.TransformationMode.SmoothTransformation))
+            q_box.addWidget(lbl_img)
+
+        c_layout.addWidget(q_frame)
+
+        # Options
+        corr = q.get("correct_ans", "").strip()
+        for k in ("A", "B", "C", "D"):
+            opt_en = q.get(f"opt_{k.lower()}_en", "")
+            opt_hi = q.get(f"opt_{k.lower()}_hi", "")
+            opt_full = q.get(f"opt_{k.lower()}_full", "")
+            opt_text = f"{opt_en} / {opt_hi}" if opt_en and opt_hi and opt_en != opt_hi else (opt_en or opt_hi or opt_full)
+
+            opt_f = QFrame()
+            is_corr = (k == corr)
+            border_c = c['correct_border'] if is_corr else c['card_border']
+            bg_c = c['correct_bg'] if is_corr else c['card_bg']
+            opt_f.setStyleSheet(f"background: {bg_c}; border: {'2px solid' if is_corr else '1px solid'} {border_c}; border-radius: 6px; padding: 6px;")
+
+            opt_h = QHBoxLayout(opt_f)
+            badge = QLabel(f" {k} ")
+            badge.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+            badge.setStyleSheet("background: #e9ecef; border-radius: 4px; padding: 2px 6px;" if not is_corr else "background: #198754; color: #fff; border-radius: 4px; padding: 2px 6px;")
+            opt_h.addWidget(badge)
+
+            lbl_opt = QLabel(opt_text)
+            lbl_opt.setFont(QFont("Segoe UI", 10))
+            lbl_opt.setWordWrap(True)
+            lbl_opt.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            opt_h.addWidget(lbl_opt, 1)
+
+            if is_corr:
+                lbl_tag = QLabel("✔ Correct Ans")
+                lbl_tag.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+                lbl_tag.setStyleSheet("color: #198754;")
+                opt_h.addWidget(lbl_tag)
+
+            c_layout.addWidget(opt_f)
+
+        # Detailed Solution Section
+        sol_frame = QFrame()
+        sol_frame.setStyleSheet(f"background: {c['card_bg']}; border: 1.5px solid {c['card_border']}; border-radius: 8px; padding: 12px;")
+        sol_box = QVBoxLayout(sol_frame)
+        sol_box.setSpacing(8)
+
+        lbl_sol_t = QLabel("💡 Detailed Step-by-Step Solution & Concept Explanation:")
+        lbl_sol_t.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
+        lbl_sol_t.setStyleSheet("color: #0d6efd;")
+        sol_box.addWidget(lbl_sol_t)
+
+        sol = self.solution_engine.get_solution(q)
+        sol_en = sol.get("solution_en", "")
+        sol_hi = sol.get("solution_hi", "")
+        if sol_en and sol_hi and sol_en != sol_hi:
+            sol_html = f"{sol_en}<hr style='border: 0.5px solid {c['card_border']}; margin: 8px 0;'>{sol_hi}"
+        else:
+            sol_html = sol_en or sol_hi
+
+        lbl_sol_body = QLabel(sol_html)
+        lbl_sol_body.setFont(QFont("Segoe UI", 10))
+        lbl_sol_body.setWordWrap(True)
+        lbl_sol_body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        sol_box.addWidget(lbl_sol_body)
+
+        c_layout.addWidget(sol_frame)
+
+        # Personal Study Note Section
+        note_frame = QFrame()
+        note_frame.setStyleSheet(f"background: {c['sub_badge_bg']}; border: 1px solid {c['card_border']}; border-radius: 8px; padding: 10px;")
+        note_box = QVBoxLayout(note_frame)
+        note_box.setSpacing(6)
+
+        lbl_n_t = QLabel("📝 Personal Study Note / Mnemonic Trick:")
+        lbl_n_t.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+        note_box.addWidget(lbl_n_t)
+
+        txt_note = QTextEdit()
+        txt_note.setFont(QFont("Segoe UI", 10))
+        txt_note.setFixedHeight(65)
+        txt_note.setPlaceholderText("Write your revision notes, tricks, or formulas here...")
+        txt_note.setPlainText(q.get("user_notes", "") or "")
+        note_box.addWidget(txt_note)
+
+        btn_save_n = QPushButton("💾 Save Note")
+        btn_save_n.setFixedWidth(120)
+        btn_save_n.setStyleSheet("background: #198754; color: #fff; font-weight: bold; border-radius: 4px; padding: 4px;")
+        
+        def save_note_action():
+            new_note = txt_note.toPlainText().strip()
+            self.db.save_user_note(q["shift_id"], q["qno"], new_note)
+            q["user_notes"] = new_note
+            QMessageBox.information(dialog, "Note Saved", "Your personal study note has been saved!")
+            self._on_search_questions()
+
+        btn_save_n.clicked.connect(save_note_action)
+        note_box.addWidget(btn_save_n)
+
+        c_layout.addWidget(note_frame)
+        c_layout.addStretch()
+
+        scroll.setWidget(w)
+        d_layout.addWidget(scroll, 1)
+
+        # Bottom close button
+        b_box = QHBoxLayout()
+        b_box.addStretch()
+        btn_close = QPushButton("Close")
+        btn_close.setStyleSheet("background: #6c757d; color: #fff; font-weight: bold; border-radius: 6px; padding: 6px 18px;")
+        btn_close.clicked.connect(dialog.accept)
+        b_box.addWidget(btn_close)
+        d_layout.addLayout(b_box)
+
+        dialog.exec()
+
+    def _on_export_pdf_solutions(self):
+        # Choose export source
+        has_search = bool(self.search_results)
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Export PDF with Solutions")
+        msg.setIcon(QMessageBox.Icon.Question)
+        msg.setText("Choose which test content you want to export as a printable PDF with detailed step-by-step solutions:")
+        
+        btn_search_export = None
+        if has_search:
+            btn_search_export = msg.addButton(f"Current Search ({len(self.search_results)} Questions)", QMessageBox.ButtonRole.ActionRole)
+        
+        btn_shift_export = msg.addButton("Full Mock Test Shift (200 Questions)", QMessageBox.ButtonRole.ActionRole)
+        btn_cancel = msg.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+
+        msg.exec()
+        clicked = msg.clickedButton()
+
+        if clicked == btn_cancel or clicked is None:
+            return
+
+        export_questions = []
+        doc_title = ""
+
+        if clicked == btn_search_export:
+            export_questions = self.search_results
+            doc_title = f"Question Bank Search ({len(export_questions)} Questions)"
+        else:
+            # Let user choose shift number (1 to 70)
+            from PyQt6.QtWidgets import QInputDialog
+            shifts = self.db.get_shifts()
+            shift_names = [f"Shift {s['shift_index']} — {s.get('name', '')} ({s.get('date', '')})" for s in shifts]
+            chosen_name, ok = QInputDialog.getItem(self, "Select Shift", "Choose a Shift paper to export with complete solutions:", shift_names, 0, False)
+            if not ok or not chosen_name:
+                return
+            shift_idx = int(chosen_name.split()[1])
+            doc_title = f"Shift #{shift_idx} Full Mock Test"
+            export_questions = self.db.get_shift_questions(shift_idx)
+
+        if not export_questions:
+            QMessageBox.warning(self, "No Questions", "No questions found to export.")
+            return
+
+        # Choose save path
+        default_filename = f"{doc_title.replace(' ', '_').replace('#', '').replace('/', '_')}_Solutions.pdf"
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Save Solutions PDF", os.path.join(os.path.expanduser("~"), default_filename), "PDF Files (*.pdf)"
+        )
+        if not file_path:
+            return
+
+        try:
+            self.pdf_exporter.export_test_with_solutions(doc_title, export_questions, file_path)
+            res = QMessageBox.information(
+                self, "Export Successful",
+                f"Printable Question Paper with Detailed Solutions generated successfully!\n\nSaved at:\n{file_path}\n\nWould you like to open it now?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            if res == QMessageBox.StandardButton.Yes:
+                os.startfile(file_path)
+        except Exception as e:
+            QMessageBox.critical(self, "Export Error", f"Failed to generate PDF:\n{str(e)}")
+
+
+    # -------------------------------------------------------------
     # Data Refresh
     # -------------------------------------------------------------
     def refresh_data(self):
@@ -414,7 +793,7 @@ class DashboardWidget(QWidget):
                 font-size: 13px;
             }}
         """
-        for tbl in (getattr(self, "table_shifts", None), getattr(self, "table_history", None), getattr(self, "table_bookmarks", None)):
+        for tbl in (getattr(self, "table_shifts", None), getattr(self, "table_history", None), getattr(self, "table_bookmarks", None), getattr(self, "table_search", None)):
             if tbl:
                 tbl.setStyleSheet(tbl_qss)
 
