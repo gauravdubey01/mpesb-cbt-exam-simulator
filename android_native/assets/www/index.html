@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>MPESB Patwari CBT Simulator</title>
   <link rel="stylesheet" href="style.css">
 </head>
@@ -34,7 +34,7 @@
       <!-- Hero Banner -->
       <section class="hero-card">
         <h2>MPESB Patwari CBT Examination</h2>
-        <p>Official 2023 Question Bank • Complete 70 Shift Mock Papers</p>
+        <p>Official 2023 Question Bank • 70 Full Mock Papers • Offline SQLite</p>
         <div class="hero-stats">
           <div class="hero-stat-item">
             <span class="stat-num">70</span>
@@ -98,10 +98,12 @@
         <div class="subject-count-selector">
           <label>Questions per session:</label>
           <div class="btn-group-pill">
-            <button class="pill-btn" onclick="setSubjectCount(15, this)">15</button>
+            <button class="pill-btn" onclick="setSubjectCount(10, this)">10</button>
+            <button class="pill-btn" onclick="setSubjectCount(20, this)">20</button>
             <button class="pill-btn active" onclick="setSubjectCount(25, this)">25</button>
             <button class="pill-btn" onclick="setSubjectCount(50, this)">50</button>
             <button class="pill-btn" onclick="setSubjectCount(100, this)">100</button>
+            <button class="pill-btn" onclick="setSubjectCount(200, this)">200</button>
           </div>
         </div>
         <div id="subjects-grid" class="subjects-grid"></div>
@@ -123,8 +125,8 @@
             <option value="Computer">Computer Proficiency</option>
           </select>
         </div>
-        <button class="btn btn-primary btn-block mb-12" onclick="searchSolutions()">Search 14,000 Questions</button>
-        <div id="sol-results-status" class="hint-text">Search for questions across all 70 papers to view detailed solutions.</div>
+        <button class="btn btn-primary btn-block mb-12" onclick="searchSolutions()">🔍 Search 14,000 Questions</button>
+        <div id="sol-results-status" class="hint-text">Search for questions across all 70 papers to view detailed bilingual solutions.</div>
         <div id="sol-results-list" class="cards-list"></div>
       </section>
 
@@ -182,14 +184,19 @@
         </div>
       </div>
 
-      <!-- Bottom Navigation / Action Bar -->
+      <!-- Bottom Navigation / Action Bar (Safe Area Protected) -->
       <footer class="exam-bottom-bar">
+        <!-- Row 1: Question controls -->
         <div class="btn-row-flex">
           <button id="btn-prev" class="btn btn-outline" onclick="navPrev()">⬅ Prev</button>
           <button id="btn-clear" class="btn btn-outline-danger" onclick="clearCurrentResponse()">Clear</button>
-          <button id="btn-mark-review" class="btn btn-purple" onclick="markReviewAndNext()">Review ➔</button>
+          <button id="btn-mark-review" class="btn btn-purple" onclick="markReviewAndNext()">🔖 Review</button>
           <button id="btn-save-next" class="btn btn-success" onclick="saveAndNext()">Save & Next ➔</button>
-          <button id="btn-submit-exam" class="btn btn-danger" onclick="confirmSubmitExam()">Submit</button>
+        </div>
+        <!-- Row 2: Secondary / Submit action -->
+        <div class="btn-row-action">
+          <button id="btn-submit-exam" class="btn btn-danger btn-block" onclick="confirmSubmitExam()">✅ Submit Examination</button>
+          <button id="btn-reveal-solution" class="btn btn-outline-primary btn-block hidden" onclick="revealPracticeSolution()">💡 Reveal Answer & Solution</button>
         </div>
       </footer>
     </div>
@@ -198,7 +205,10 @@
     <div id="view-result" class="view">
       <div class="result-scroll-area">
         <div class="result-header-card">
-          <h2 id="res-title">📊 Test Performance Scorecard</h2>
+          <div class="result-header-top">
+            <h2 id="res-title">📊 Test Performance Scorecard</h2>
+            <button class="btn btn-success btn-xs" onclick="retakeCurrentTest()">🔄 Retake Test</button>
+          </div>
           <div class="res-kpi-grid">
             <div class="res-kpi-card">
               <span class="res-kpi-val" id="res-score">0 / 200</span>
@@ -219,16 +229,16 @@
           </div>
         </div>
 
-        <!-- Section Breakdown -->
-        <h3 class="section-title">Section-wise Performance</h3>
+        <!-- Section Breakdown Table -->
+        <h3 class="section-title">Section-wise Performance Breakdown</h3>
         <div id="res-sections-table" class="table-container"></div>
 
-        <!-- Review Question List -->
-        <h3 class="section-title">Question Breakdown & Solutions</h3>
+        <!-- Review Question List with filters -->
+        <h3 class="section-title">Question-by-Question Review & Solutions</h3>
         <div class="filter-pill-row">
-          <button class="pill-btn active" onclick="filterReviewQuestions('all', this)">All</button>
-          <button class="pill-btn text-danger" onclick="filterReviewQuestions('wrong', this)">❌ Mistakes</button>
-          <button class="pill-btn text-success" onclick="filterReviewQuestions('correct', this)">✅ Correct</button>
+          <button class="pill-btn active" onclick="filterReviewQuestions('all', this)">All Questions</button>
+          <button class="pill-btn text-danger font-bold" onclick="filterReviewQuestions('wrong', this)">❌ Mistakes</button>
+          <button class="pill-btn text-success font-bold" onclick="filterReviewQuestions('correct', this)">✅ Correct</button>
           <button class="pill-btn" onclick="filterReviewQuestions('unattempted', this)">⚪ Skipped</button>
         </div>
         <div id="res-questions-list" class="cards-list"></div>
@@ -285,7 +295,7 @@
         <div id="modal-sol-options" class="options-container mb-12"></div>
         <div class="solution-box mb-12">
           <div class="solution-header">
-            <span>💡 Detailed Step-by-Step Explanation:</span>
+            <span>💡 Detailed Step-by-Step Explanation & Concepts:</span>
           </div>
           <div id="modal-sol-body" class="solution-text"></div>
         </div>

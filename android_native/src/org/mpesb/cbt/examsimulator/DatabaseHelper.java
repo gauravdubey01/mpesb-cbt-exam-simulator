@@ -2,6 +2,7 @@ package org.mpesb.cbt.examsimulator;
 
 import android.content.ContentValues;
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.util.Log;
@@ -13,7 +14,9 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
+import java.util.List;
 import java.util.Locale;
 import java.util.zip.GZIPInputStream;
 
@@ -21,6 +24,7 @@ public class DatabaseHelper {
     private static final String TAG = "DatabaseHelper";
     private static final String DB_NAME = "exam_data.db";
     private static final String DB_ASSET_GZ = "exam_data.db.gz";
+    private static final int CURRENT_DB_VERSION = 2; // Version 2: Complete 14,000 solutions pre-cached
 
     private final Context context;
     private SQLiteDatabase db;
@@ -32,9 +36,72 @@ public class DatabaseHelper {
 
     private synchronized void ensureDatabase() {
         File dbFile = context.getDatabasePath(DB_NAME);
-        if (!dbFile.exists() || dbFile.length() < 1000000) {
+        SharedPreferences prefs = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE);
+        int savedVer = prefs.getInt("db_version", 0);
+
+        boolean needExtract = !dbFile.exists() || dbFile.length() < 1000000 || savedVer < CURRENT_DB_VERSION;
+
+        if (needExtract) {
+            // Backup user data if upgrading from previous database
+            List<ContentValues> backupBookmarks = new ArrayList<>();
+            List<ContentValues> backupAttempts = new ArrayList<>();
+            List<ContentValues> backupNotes = new ArrayList<>();
+
+            if (dbFile.exists() && dbFile.length() > 500000) {
+                try (SQLiteDatabase oldDb = SQLiteDatabase.openDatabase(dbFile.getAbsolutePath(), null, SQLiteDatabase.OPEN_READONLY)) {
+                    // Backup bookmarks
+                    try (Cursor c = oldDb.rawQuery("SELECT shift_id, qno, subject, note, created_at FROM bookmarks", null)) {
+                        while (c.moveToNext()) {
+                            ContentValues cv = new ContentValues();
+                            cv.put("shift_id", c.getInt(0));
+                            cv.put("qno", c.getInt(1));
+                            cv.put("subject", c.getString(2));
+                            cv.put("note", c.getString(3));
+                            cv.put("created_at", c.getString(4));
+                            backupBookmarks.add(cv);
+                        }
+                    } catch (Exception ignored) {}
+
+                    // Backup test attempts
+                    try (Cursor c = oldDb.rawQuery("SELECT shift_id, title, mode, started_at, completed_at, score, max_score, total_questions, correct_count, incorrect_count, unattempted_count, marked_count, time_spent_secs, answers_json, section_scores_json FROM test_attempts", null)) {
+                        while (c.moveToNext()) {
+                            ContentValues cv = new ContentValues();
+                            cv.put("shift_id", c.getInt(0));
+                            cv.put("title", c.getString(1));
+                            cv.put("mode", c.getString(2));
+                            cv.put("started_at", c.getString(3));
+                            cv.put("completed_at", c.getString(4));
+                            cv.put("score", c.getDouble(5));
+                            cv.put("max_score", c.getDouble(6));
+                            cv.put("total_questions", c.getInt(7));
+                            cv.put("correct_count", c.getInt(8));
+                            cv.put("incorrect_count", c.getInt(9));
+                            cv.put("unattempted_count", c.getInt(10));
+                            cv.put("marked_count", c.getInt(11));
+                            cv.put("time_spent_secs", c.getInt(12));
+                            cv.put("answers_json", c.getString(13));
+                            cv.put("section_scores_json", c.getString(14));
+                            backupAttempts.add(cv);
+                        }
+                    } catch (Exception ignored) {}
+
+                    // Backup user notes
+                    try (Cursor c = oldDb.rawQuery("SELECT shift_id, qno, user_notes FROM questions WHERE user_notes IS NOT NULL AND user_notes != ''", null)) {
+                        while (c.moveToNext()) {
+                            ContentValues cv = new ContentValues();
+                            cv.put("shift_id", c.getInt(0));
+                            cv.put("qno", c.getInt(1));
+                            cv.put("user_notes", c.getString(2));
+                            backupNotes.add(cv);
+                        }
+                    } catch (Exception ignored) {}
+                } catch (Exception e) {
+                    Log.w(TAG, "Could not read old database for backup: " + e.getMessage());
+                }
+            }
+
             dbFile.getParentFile().mkdirs();
-            Log.i(TAG, "Extracting database from asset " + DB_ASSET_GZ + "...");
+            Log.i(TAG, "Extracting full database v" + CURRENT_DB_VERSION + " from asset " + DB_ASSET_GZ + "...");
             try (InputStream is = context.getAssets().open(DB_ASSET_GZ);
                  GZIPInputStream gzis = new GZIPInputStream(is);
                  FileOutputStream fos = new FileOutputStream(dbFile)) {
@@ -45,13 +112,36 @@ public class DatabaseHelper {
                 }
                 fos.flush();
                 Log.i(TAG, "Database extraction complete: " + dbFile.length() + " bytes.");
+                prefs.edit().putInt("db_version", CURRENT_DB_VERSION).apply();
             } catch (Exception e) {
                 Log.e(TAG, "Error extracting database: " + e.getMessage(), e);
             }
+
+            // Restore user data into newly extracted database
+            if (!backupBookmarks.isEmpty() || !backupAttempts.isEmpty() || !backupNotes.isEmpty()) {
+                try (SQLiteDatabase newDb = SQLiteDatabase.openDatabase(dbFile.getAbsolutePath(), null, SQLiteDatabase.OPEN_READWRITE)) {
+                    for (ContentValues cv : backupBookmarks) {
+                        newDb.insertWithOnConflict("bookmarks", null, cv, SQLiteDatabase.CONFLICT_REPLACE);
+                    }
+                    for (ContentValues cv : backupAttempts) {
+                        newDb.insert("test_attempts", null, cv);
+                    }
+                    for (ContentValues cv : backupNotes) {
+                        int sId = cv.getAsInteger("shift_id");
+                        int qNo = cv.getAsInteger("qno");
+                        String note = cv.getAsString("user_notes");
+                        ContentValues ncv = new ContentValues();
+                        ncv.put("user_notes", note);
+                        newDb.update("questions", ncv, "shift_id = ? AND qno = ?", new String[]{String.valueOf(sId), String.valueOf(qNo)});
+                    }
+                } catch (Exception e) {
+                    Log.w(TAG, "Error restoring user data: " + e.getMessage());
+                }
+            }
         }
+
         try {
             db = SQLiteDatabase.openDatabase(dbFile.getAbsolutePath(), null, SQLiteDatabase.OPEN_READWRITE);
-            // Ensure bookmark table and columns exist
             db.execSQL("CREATE TABLE IF NOT EXISTS bookmarks (id INTEGER PRIMARY KEY AUTOINCREMENT, shift_id INTEGER, qno INTEGER, subject TEXT, note TEXT, created_at TEXT, UNIQUE(shift_id, qno))");
             db.execSQL("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)");
             db.execSQL("CREATE TABLE IF NOT EXISTS test_attempts (id INTEGER PRIMARY KEY AUTOINCREMENT, shift_id INTEGER, title TEXT, mode TEXT, started_at TEXT, completed_at TEXT, score REAL, max_score REAL, total_questions INTEGER, correct_count INTEGER, incorrect_count INTEGER, unattempted_count INTEGER, marked_count INTEGER, time_spent_secs INTEGER, answers_json TEXT, section_scores_json TEXT)");
@@ -208,7 +298,7 @@ public class DatabaseHelper {
     public synchronized String getBookmarks() {
         JSONArray arr = new JSONArray();
         if (db == null) return arr.toString();
-        String sql = "SELECT b.shift_id, b.qno, b.subject, b.created_at, q.question_en, q.question_hi, q.correct_ans " +
+        String sql = "SELECT b.shift_id, b.qno, b.subject, b.created_at, q.question_en, q.question_hi, q.correct_ans, q.solution_en, q.solution_hi, q.user_notes " +
                      "FROM bookmarks b JOIN questions q ON b.shift_id = q.shift_id AND b.qno = q.qno " +
                      "ORDER BY b.id DESC";
         try (Cursor c = db.rawQuery(sql, null)) {
@@ -221,6 +311,9 @@ public class DatabaseHelper {
                 b.put("question_en", c.getString(4));
                 b.put("question_hi", c.getString(5));
                 b.put("correct_ans", c.getString(6));
+                b.put("solution_en", c.getString(7));
+                b.put("solution_hi", c.getString(8));
+                b.put("user_notes", c.getString(9));
                 arr.put(b);
             }
         } catch (Exception e) {
@@ -283,6 +376,32 @@ public class DatabaseHelper {
             Log.e(TAG, "getTestAttempts error: " + e.getMessage());
         }
         return arr.toString();
+    }
+
+    public synchronized String getTestAttempt(int attemptId) {
+        JSONObject a = new JSONObject();
+        if (db == null) return a.toString();
+        try (Cursor c = db.rawQuery("SELECT id, shift_id, title, mode, completed_at, score, max_score, total_questions, correct_count, incorrect_count, unattempted_count, time_spent_secs, answers_json, section_scores_json FROM test_attempts WHERE id = ?", new String[]{String.valueOf(attemptId)})) {
+            if (c.moveToFirst()) {
+                a.put("id", c.getInt(0));
+                a.put("shift_id", c.getInt(1));
+                a.put("title", c.getString(2));
+                a.put("mode", c.getString(3));
+                a.put("completed_at", c.getString(4));
+                a.put("score", c.getDouble(5));
+                a.put("max_score", c.getDouble(6));
+                a.put("total_questions", c.getInt(7));
+                a.put("correct_count", c.getInt(8));
+                a.put("incorrect_count", c.getInt(9));
+                a.put("unattempted_count", c.getInt(10));
+                a.put("time_spent_secs", c.getInt(11));
+                a.put("answers_json", c.getString(12));
+                a.put("section_scores_json", c.getString(13));
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "getTestAttempt error: " + e.getMessage());
+        }
+        return a.toString();
     }
 
     public synchronized String getSummaryStats() {

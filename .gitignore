@@ -8,6 +8,7 @@ build/
 dist/
 *.spec.bak
 android_native/build/
+*.idsig
 
 # Large PDF documents
 *.pdf

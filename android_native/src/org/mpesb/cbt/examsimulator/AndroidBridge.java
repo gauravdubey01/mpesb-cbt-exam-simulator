@@ -66,6 +66,11 @@ public class AndroidBridge {
     }
 
     @JavascriptInterface
+    public String getTestAttempt(int attemptId) {
+        return dbHelper.getTestAttempt(attemptId);
+    }
+
+    @JavascriptInterface
     public String getSummaryStats() {
         return dbHelper.getSummaryStats();
     }

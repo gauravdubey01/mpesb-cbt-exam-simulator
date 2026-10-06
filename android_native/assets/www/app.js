@@ -57,6 +57,22 @@ function setupAndroidBridgeFallback() {
       saveUserNote: () => true,
       saveTestAttempt: () => 1,
       getTestAttempts: () => "[]",
+      getTestAttempt: (id) => JSON.stringify({
+        id: id,
+        title: "Test #01",
+        shift_id: 1,
+        mode: "EXAM",
+        score: 150.0,
+        max_score: 200.0,
+        total_questions: 200,
+        correct_count: 150,
+        incorrect_count: 30,
+        unattempted_count: 20,
+        marked_count: 5,
+        time_spent_secs: 7200,
+        answers_json: "{}",
+        section_scores_json: "{}"
+      }),
       getSummaryStats: () => JSON.stringify({total_attempts: 0, avg_score: 0.0, best_score: 0.0, bookmarks_count: 0}),
       saveSetting: () => {},
       getSetting: (k, d) => d,
@@ -252,6 +268,7 @@ function setSubjectCount(count, btn) {
   currentSubjectCount = count;
   document.querySelectorAll(".subject-count-selector .pill-btn").forEach(b => b.classList.remove("active"));
   btn.classList.add("active");
+  renderSubjectsGrid();
 }
 
 function renderSubjectsGrid() {
@@ -314,21 +331,80 @@ function initExamSession() {
     questionStates[currentQuestions[0].qno] = "NOT_ANSWERED";
   }
 
-  // Timer
+  // Timer & Mode actions
   clearInterval(timerInterval);
   if (examMode === "EXAM") {
     timerSeconds = 180 * 60; // 3 hours
     document.getElementById("exam-timer-container").classList.remove("hidden");
     document.getElementById("btn-submit-exam").classList.remove("hidden");
+    document.getElementById("btn-reveal-solution").classList.add("hidden");
     startTimer();
   } else {
     document.getElementById("exam-timer-container").classList.add("hidden");
     document.getElementById("btn-submit-exam").classList.add("hidden");
+    document.getElementById("btn-reveal-solution").classList.remove("hidden");
   }
 
   renderQuestion();
   renderPalette();
   showView("view-exam");
+}
+
+function revealPracticeSolution() {
+  if (!currentQuestions || currentQuestions.length === 0) return;
+  const q = currentQuestions[currentQIdx];
+  const corr = (q.correct_ans || "A").trim();
+
+  const fbCard = document.getElementById("practice-feedback-card");
+  fbCard.classList.remove("hidden");
+
+  const chosen = userAnswers[q.qno];
+  const fbStatus = document.getElementById("feedback-status");
+  if (chosen) {
+    if (chosen === corr) {
+      fbStatus.textContent = "✅ Correct Answer! (+1.00 Marks)";
+      fbStatus.className = "feedback-status text-green";
+    } else {
+      fbStatus.textContent = `❌ Incorrect (You selected Option ${chosen})`;
+      fbStatus.className = "feedback-status text-danger";
+    }
+  } else {
+    fbStatus.textContent = `💡 Official Answer Key: Option (${corr})`;
+    fbStatus.className = "feedback-status text-blue";
+  }
+
+  document.getElementById("feedback-correct-answer").textContent =
+    `Official Answer Key: Option (${corr})  |  Subject: ${q.subject || 'General'}`;
+
+  // Study note banner
+  const noteBanner = document.getElementById("feedback-user-note");
+  if (q.user_notes && q.user_notes.trim()) {
+    noteBanner.innerHTML = `📝 <b>My Study Note:</b> ${escapeHtml(q.user_notes)}`;
+    noteBanner.classList.remove("hidden");
+  } else {
+    noteBanner.classList.add("hidden");
+  }
+
+  // Solution
+  const sol = getOrGenerateSolution(q);
+  const solEn = sol.solution_en || "";
+  const solHi = sol.solution_hi || "";
+  let solText = "";
+  if (currentLangMode === "en") solText = solEn || solHi;
+  else if (currentLangMode === "hi") solText = solHi || solEn;
+  else solText = (solEn && solHi && solEn !== solHi) ? `${solEn}\n\n───────────────\n${solHi}` : (solEn || solHi);
+
+  document.getElementById("feedback-solution-text").textContent = solText;
+
+  // Highlight correct option
+  document.querySelectorAll(".option-item").forEach(item => {
+    const badge = item.querySelector(".opt-badge");
+    if (badge && badge.textContent.trim() === corr) {
+      item.classList.add("correct");
+    }
+  });
+
+  fbCard.scrollIntoView({ behavior: 'smooth' });
 }
 
 function startTimer() {
@@ -935,11 +1011,70 @@ function loadHistoryTab() {
           <div class="item-meta">
             📅 ${escapeHtml(a.completed_at || '')} &bull; Accuracy: <b>${acc}</b> &bull; Time: <b>${mins}m</b>
           </div>
+          <div class="item-actions">
+            <button class="btn btn-outline btn-block" onclick="reviewPastAttempt(${a.id})">🔍 Review Solutions & Mistakes</button>
+            <button class="btn btn-success btn-xs" onclick="startExam(${a.shift_id}, 'EXAM')">🔄 Retake</button>
+          </div>
         </div>
       `;
     }).join("");
   } catch (e) {
     console.error("loadHistoryTab error", e);
+  }
+}
+
+function reviewPastAttempt(attemptId) {
+  try {
+    let attempt = null;
+    if (window.Android && window.Android.getTestAttempt) {
+      const attStr = window.Android.getTestAttempt(attemptId);
+      if (attStr) attempt = JSON.parse(attStr);
+    }
+    if (!attempt) {
+      alert("Attempt details could not be retrieved.");
+      return;
+    }
+
+    const qStr = window.Android.getShiftQuestions(attempt.shift_id);
+    currentQuestions = JSON.parse(qStr || "[]");
+    if (!currentQuestions || currentQuestions.length === 0) {
+      alert("Unable to load questions for this test shift.");
+      return;
+    }
+
+    try {
+      userAnswers = JSON.parse(attempt.answers_json || "{}");
+    } catch (e) {
+      userAnswers = {};
+    }
+
+    let sectionScores = {};
+    try {
+      sectionScores = JSON.parse(attempt.section_scores_json || "{}");
+    } catch (e) {
+      sectionScores = {};
+    }
+
+    const shift = allShifts.find(s => s.shift_index === attempt.shift_id);
+    currentShiftInfo = shift || { shift_index: attempt.shift_id, name: attempt.title };
+    currentAttemptData = attempt;
+    examMode = attempt.mode || "EXAM";
+
+    renderResultView(attempt, sectionScores);
+    showView("view-result");
+  } catch (e) {
+    console.error("reviewPastAttempt error", e);
+    alert("Error loading past test review: " + e.message);
+  }
+}
+
+function retakeCurrentTest() {
+  if (currentShiftInfo && currentShiftInfo.shift_index) {
+    startExam(currentShiftInfo.shift_index, "EXAM");
+  } else if (currentAttemptData && currentAttemptData.shift_id) {
+    startExam(currentAttemptData.shift_id, "EXAM");
+  } else {
+    showView("view-dashboard");
   }
 }
 
