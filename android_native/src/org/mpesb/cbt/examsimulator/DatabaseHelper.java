@@ -200,6 +200,43 @@ public class DatabaseHelper {
         return arr.toString();
     }
 
+    public synchronized String getShiftSubjectQuestions(int shiftId, String subject) {
+        JSONArray arr = new JSONArray();
+        if (db == null) return arr.toString();
+        String sql = "SELECT shift_id, qno, qid, subject, question_en, question_hi, question_full, opt_a_en, opt_a_hi, opt_a_full, opt_b_en, opt_b_hi, opt_b_full, opt_c_en, opt_c_hi, opt_c_full, opt_d_en, opt_d_hi, opt_d_full, correct_ans, page_num, solution_en, solution_hi, user_notes FROM questions WHERE shift_id = ? AND subject LIKE ? ORDER BY qno ASC";
+        try (Cursor c = db.rawQuery(sql, new String[]{String.valueOf(shiftId), "%" + subject + "%"})) {
+            while (c.moveToNext()) {
+                arr.put(cursorToQuestion(c));
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "getShiftSubjectQuestions error: " + e.getMessage());
+        }
+        return arr.toString();
+    }
+
+    public synchronized String getSubjectSets(String subject) {
+        JSONArray arr = new JSONArray();
+        if (db == null) return arr.toString();
+        String sql = "SELECT s.shift_index, s.name, s.date, s.slot, COUNT(q.qno) as q_count " +
+                     "FROM shifts s JOIN questions q ON s.shift_index = q.shift_id " +
+                     "WHERE q.subject LIKE ? " +
+                     "GROUP BY s.shift_index, s.name, s.date, s.slot ORDER BY s.shift_index ASC";
+        try (Cursor c = db.rawQuery(sql, new String[]{"%" + subject + "%"})) {
+            while (c.moveToNext()) {
+                JSONObject obj = new JSONObject();
+                obj.put("shift_id", c.getInt(0));
+                obj.put("name", c.getString(1));
+                obj.put("date", c.getString(2));
+                obj.put("slot", c.getString(3));
+                obj.put("question_count", c.getInt(4));
+                arr.put(obj);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "getSubjectSets error: " + e.getMessage());
+        }
+        return arr.toString();
+    }
+
     public synchronized String searchQuestions(String query, String subject, int limit) {
         JSONArray arr = new JSONArray();
         if (db == null) return arr.toString();

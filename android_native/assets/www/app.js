@@ -50,6 +50,19 @@ function setupAndroidBridgeFallback() {
         solution_hi: "चरण 1: मुख्य सूत्र को समझें।\nचरण 2: दिए गए मानों को रखें।\nचरण 3: सत्यापन सही विकल्प सिद्ध करता है।"
       }))),
       getQuestionsBySubject: (sub, limit) => window.Android.getShiftQuestions(1),
+      getShiftSubjectQuestions: (shiftId, subject) => {
+        const all = JSON.parse(window.Android.getShiftQuestions(shiftId));
+        return JSON.stringify(all.filter(q => q.subject && q.subject.toLowerCase().includes(subject.toLowerCase().replace(/%/g, ''))).slice(0, 25));
+      },
+      getSubjectSets: (subject) => {
+        return JSON.stringify(Array.from({length: 70}, (_, i) => ({
+          shift_id: i + 1,
+          name: `Mock Paper #${String(i+1).padStart(2, '0')}`,
+          date: `${['15-03-2023', '16-03-2023', '17-03-2023', '18-03-2023'][i % 4]}`,
+          slot: i % 2 === 0 ? "9:00 AM - 12:00 PM" : "2:30 PM - 5:30 PM",
+          question_count: 25
+        })));
+      },
       searchQuestions: () => "[]",
       toggleBookmark: () => true,
       isBookmarked: () => false,
@@ -184,14 +197,21 @@ window.handleAndroidBack = function() {
 // -------------------------------------------------------------
 // Dashboard & Tabs
 // -------------------------------------------------------------
-function switchDashTab(tabId) {
+function switchDashTab(tabId, btn) {
   document.querySelectorAll(".nav-tab").forEach(t => t.classList.remove("active"));
   document.querySelectorAll(".dash-tab-content").forEach(c => c.classList.remove("active"));
+  document.querySelectorAll(".hero-action-btn").forEach(b => b.classList.remove("active"));
 
   const targetTab = document.getElementById(`tab-${tabId}`);
   if (targetTab) targetTab.classList.add("active");
-  event.currentTarget.classList.add("active");
 
+  const tabBtn = btn || document.getElementById(`tab-btn-${tabId}`);
+  if (tabBtn) tabBtn.classList.add("active");
+
+  const heroBtn = document.getElementById(`hero-btn-${tabId}`);
+  if (heroBtn) heroBtn.classList.add("active");
+
+  if (tabId === "subjects") renderSubjectsTab();
   if (tabId === "history") loadHistoryTab();
   if (tabId === "bookmarks") loadBookmarksTab();
 }
@@ -209,7 +229,7 @@ function loadDashboardData() {
     allShifts = JSON.parse(shiftsStr || "[]");
     renderShiftsList(allShifts);
 
-    renderSubjectsGrid();
+    renderSubjectsTab();
   } catch (e) {
     console.error("loadDashboardData error", e);
   }
@@ -232,11 +252,25 @@ function renderShiftsList(shifts) {
         📅 ${escapeHtml(s.date || '')} &bull; ⏰ ${escapeHtml(s.slot || '')}
       </div>
       <div class="item-actions">
-        <button class="btn btn-success btn-block" onclick="startExam(${s.shift_index}, 'EXAM')">▶ Start CBT Exam</button>
+        <button class="btn btn-success btn-block" onclick="startExam(${s.shift_index}, 'EXAM')">▶ Full CBT Exam</button>
         <button class="btn btn-outline btn-block" onclick="startExam(${s.shift_index}, 'PRACTICE')">📖 Practice</button>
+        <button class="btn btn-outline btn-xs" onclick="toggleShiftSubjectChips(${s.shift_index})">🎯 Subject Sets ▾</button>
+      </div>
+      <div id="shift-sub-chips-${s.shift_index}" class="card-sub-expand hidden">
+        ${SUBJECT_CONFIG.map(sub => `
+          <div class="sub-set-chip" onclick="startSubjectSetPractice('${sub.key}', ${s.shift_index}, 'PRACTICE')">
+            <span class="chip-name">${sub.name}</span>
+            <span class="chip-cnt">${sub.qPerSet} Qs ➔</span>
+          </div>
+        `).join("")}
       </div>
     </div>
   `).join("");
+}
+
+function toggleShiftSubjectChips(shiftId) {
+  const el = document.getElementById(`shift-sub-chips-${shiftId}`);
+  if (el) el.classList.toggle("hidden");
 }
 
 function filterShifts() {
@@ -252,51 +286,155 @@ function filterShifts() {
   renderShiftsList(filtered);
 }
 
-// Subject Practice Grid
+// -------------------------------------------------------------
+// Subject Practice Sets Engine
+// -------------------------------------------------------------
 const SUBJECT_CONFIG = [
-  { key: "Knowledge", name: "🏛️ General Knowledge", count: "1,400 Qs", color: "#0d6efd" },
-  { key: "English", name: "🔤 General English", count: "1,750 Qs", color: "#198754" },
-  { key: "Hindi", name: "📖 General Hindi", count: "1,750 Qs", color: "#b07d00" },
-  { key: "Maths", name: "📐 General Mathematics", count: "1,750 Qs", color: "#dc3545" },
-  { key: "Reasoning", name: "🧩 General Reasoning", count: "1,400 Qs", color: "#6f42c1" },
-  { key: "Science", name: "🔬 General Science", count: "1,750 Qs", color: "#0dcaf0" },
-  { key: "Management", name: "💼 General Management", count: "1,400 Qs", color: "#6610f2" },
-  { key: "Computer", name: "💻 Computer Proficiency", count: "1,400 Qs", color: "#d63384" },
+  { key: "Maths", filter: "Maths", name: "📐 General Mathematics", count: "1,750 Qs", totalSets: 70, qPerSet: 25, color: "#dc3545" },
+  { key: "Hindi", filter: "Hindi", name: "📖 General Hindi", count: "1,750 Qs", totalSets: 70, qPerSet: 25, color: "#b07d00" },
+  { key: "Science", filter: "Science", name: "🔬 General Science", count: "1,750 Qs", totalSets: 70, qPerSet: 25, color: "#0dcaf0" },
+  { key: "English", filter: "English", name: "🔤 General English", count: "1,750 Qs", totalSets: 70, qPerSet: 25, color: "#198754" },
+  { key: "Reasoning", filter: "Reasoning", name: "🧩 General Reasoning", count: "1,400 Qs", totalSets: 70, qPerSet: 20, color: "#6f42c1" },
+  { key: "Aptitude", filter: "Aptitude", name: "⚡ General Aptitude", count: "1,400 Qs", totalSets: 70, qPerSet: 20, color: "#fd7e14" },
+  { key: "Computer", filter: "Computer", name: "💻 Computer Proficiency", count: "1,400 Qs", totalSets: 70, qPerSet: 20, color: "#d63384" },
+  { key: "Management", filter: "Management", name: "💼 General Management", count: "1,400 Qs", totalSets: 70, qPerSet: 20, color: "#6610f2" },
+  { key: "Knowledge", filter: "Gen. Knowledge", name: "🏛️ General Knowledge", count: "1,400 Qs", totalSets: 70, qPerSet: 20, color: "#0d6efd" }
 ];
+
+let activeSubjectKey = "Maths";
+let activeSubjectSets = [];
+
+function selectActiveSubject(key) {
+  activeSubjectKey = key;
+  renderSubjectsTab();
+}
+
+function renderSubjectsTab() {
+  const navContainer = document.getElementById("subject-nav-scroll");
+  if (!navContainer) return;
+
+  navContainer.innerHTML = SUBJECT_CONFIG.map(sub => `
+    <button class="subject-nav-pill ${sub.key === activeSubjectKey ? 'active' : ''}" onclick="selectActiveSubject('${sub.key}')">
+      ${sub.name}
+    </button>
+  `).join("");
+
+  loadActiveSubjectSets();
+}
+
+function loadActiveSubjectSets() {
+  const subObj = SUBJECT_CONFIG.find(s => s.key === activeSubjectKey) || SUBJECT_CONFIG[0];
+  document.getElementById("sub-active-title").textContent = `${subObj.name} Practice Sets`;
+  document.getElementById("sub-active-desc").textContent = `${subObj.totalSets} Official Practice Sets • ${subObj.count} Questions • Official Exam Papers`;
+  document.getElementById("sub-active-badge").textContent = `${subObj.qPerSet} Qs / Set`;
+
+  try {
+    let setsStr = "[]";
+    if (window.Android && window.Android.getSubjectSets) {
+      setsStr = window.Android.getSubjectSets(subObj.filter);
+    }
+    activeSubjectSets = JSON.parse(setsStr || "[]");
+    renderSubjectSetsList(activeSubjectSets);
+  } catch (e) {
+    console.error("loadActiveSubjectSets error", e);
+    renderSubjectSetsList([]);
+  }
+}
+
+function renderSubjectSetsList(sets) {
+  const container = document.getElementById("subject-sets-list");
+  if (!container) return;
+  const subObj = SUBJECT_CONFIG.find(s => s.key === activeSubjectKey) || SUBJECT_CONFIG[0];
+
+  if (!sets || sets.length === 0) {
+    container.innerHTML = `<div class="hint-text text-center py-20">No practice sets found for this subject.</div>`;
+    return;
+  }
+
+  container.innerHTML = sets.map((s, idx) => `
+    <div class="item-card">
+      <div class="item-card-header">
+        <span class="item-title">📝 ${subObj.name.split(" ")[1]} Set #${String(idx + 1).padStart(2, '0')}</span>
+        <span class="badge-subject">${s.question_count || subObj.qPerSet} Questions</span>
+      </div>
+      <div class="item-meta">
+        📄 Paper: <b>${escapeHtml(s.name)}</b> &bull; 📅 ${escapeHtml(s.date || '')} &bull; ⏰ ${escapeHtml(s.slot || '')}
+      </div>
+      <div class="item-actions">
+        <button class="btn btn-outline btn-block" onclick="startSubjectSetPractice('${subObj.key}', ${s.shift_id}, 'PRACTICE')">📖 Practice Set</button>
+        <button class="btn btn-success btn-block" onclick="startSubjectSetPractice('${subObj.key}', ${s.shift_id}, 'EXAM')">⏱️ CBT Test</button>
+      </div>
+    </div>
+  `).join("");
+}
+
+function filterSubjectSets() {
+  const q = (document.getElementById("subject-set-search").value || "").trim().toLowerCase();
+  if (!q) {
+    renderSubjectSetsList(activeSubjectSets);
+    return;
+  }
+  const filtered = activeSubjectSets.filter((s, idx) => {
+    const setName = `set ${idx + 1}`.toLowerCase();
+    const paperName = (s.name || "").toLowerCase();
+    const date = (s.date || "").toLowerCase();
+    const slot = (s.slot || "").toLowerCase();
+    return setName.includes(q) || paperName.includes(q) || date.includes(q) || slot.includes(q);
+  });
+  renderSubjectSetsList(filtered);
+}
 
 function setSubjectCount(count, btn) {
   currentSubjectCount = count;
   document.querySelectorAll(".subject-count-selector .pill-btn").forEach(b => b.classList.remove("active"));
   btn.classList.add("active");
-  renderSubjectsGrid();
 }
 
-function renderSubjectsGrid() {
-  const container = document.getElementById("subjects-grid");
-  container.innerHTML = SUBJECT_CONFIG.map(sub => `
-    <div class="subject-card" onclick="startSubjectPractice('${sub.key}', '${sub.name}')">
-      <div>
-        <div class="sub-icon-title">${sub.name}</div>
-        <div class="sub-count-tag">Bank: ${sub.count}</div>
-      </div>
-      <button class="btn btn-outline btn-xs" style="color: ${sub.color}; border-color: ${sub.color};">Practice ${currentSubjectCount} Qs ➔</button>
-    </div>
-  `).join("");
-}
-
-function startSubjectPractice(key, name) {
+function startSubjectSetPractice(subjectKey, shiftId, mode) {
+  const subObj = SUBJECT_CONFIG.find(s => s.key === subjectKey) || SUBJECT_CONFIG[0];
   try {
-    const qStr = window.Android.getQuestionsBySubject(key, currentSubjectCount);
+    let qStr = "";
+    if (window.Android && window.Android.getShiftSubjectQuestions) {
+      qStr = window.Android.getShiftSubjectQuestions(shiftId, subObj.filter);
+    } else {
+      qStr = window.Android.getQuestionsBySubject(subObj.filter, subObj.qPerSet);
+    }
     currentQuestions = JSON.parse(qStr || "[]");
     if (!currentQuestions || currentQuestions.length === 0) {
-      alert("No questions found for " + name);
+      alert(`No questions found for ${subObj.name} in Shift #${shiftId}`);
       return;
     }
-    currentShiftInfo = { shift_index: 0, name: `Practice: ${name} (${currentQuestions.length} Qs)` };
+    const shift = allShifts.find(s => s.shift_index === shiftId);
+    const paperDate = shift ? shift.date : "";
+    currentShiftInfo = {
+      shift_index: shiftId,
+      name: `${subObj.name} Set #${shiftId} (${currentQuestions.length} Qs)${paperDate ? ' - ' + paperDate : ''}`
+    };
+    examMode = mode;
+    initExamSession();
+  } catch (e) {
+    console.error("startSubjectSetPractice error", e);
+    alert("Error starting subject practice: " + e.message);
+  }
+}
+
+function startActiveSubjectShuffle() {
+  const subObj = SUBJECT_CONFIG.find(s => s.key === activeSubjectKey) || SUBJECT_CONFIG[0];
+  try {
+    const qStr = window.Android.getQuestionsBySubject(subObj.filter, currentSubjectCount);
+    currentQuestions = JSON.parse(qStr || "[]");
+    if (!currentQuestions || currentQuestions.length === 0) {
+      alert("No questions found for " + subObj.name);
+      return;
+    }
+    currentShiftInfo = {
+      shift_index: 0,
+      name: `${subObj.name} Quick Shuffle (${currentQuestions.length} Qs)`
+    };
     examMode = "PRACTICE";
     initExamSession();
   } catch (e) {
-    console.error("startSubjectPractice error", e);
+    console.error("startActiveSubjectShuffle error", e);
   }
 }
 
@@ -334,7 +472,8 @@ function initExamSession() {
   // Timer & Mode actions
   clearInterval(timerInterval);
   if (examMode === "EXAM") {
-    timerSeconds = 180 * 60; // 3 hours
+    // If set is 25 Qs, give 25 mins. If full 200 Qs, give 180 mins (3 hours)
+    timerSeconds = Math.min(180 * 60, Math.max(10 * 60, currentQuestions.length * 60));
     document.getElementById("exam-timer-container").classList.remove("hidden");
     document.getElementById("btn-submit-exam").classList.remove("hidden");
     document.getElementById("btn-reveal-solution").classList.add("hidden");
@@ -345,9 +484,37 @@ function initExamSession() {
     document.getElementById("btn-reveal-solution").classList.remove("hidden");
   }
 
+  // Populate in-exam subject filter
+  const subFilterEl = document.getElementById("exam-subject-filter");
+  if (subFilterEl) {
+    const subs = Array.from(new Set(currentQuestions.map(q => q.subject || "General")));
+    if (subs.length > 1) {
+      subFilterEl.innerHTML = `<option value="ALL">All Subjects (${currentQuestions.length} Qs)</option>` +
+        subs.map(s => {
+          const cnt = currentQuestions.filter(q => q.subject === s).length;
+          return `<option value="${escapeHtml(s)}">${escapeHtml(s.replace(" Graduate", ""))} (${cnt})</option>`;
+        }).join("");
+      subFilterEl.value = "ALL";
+      subFilterEl.classList.remove("hidden");
+    } else {
+      subFilterEl.classList.add("hidden");
+    }
+  }
+
   renderQuestion();
   renderPalette();
   showView("view-exam");
+}
+
+function filterExamBySubject(sub) {
+  if (sub === "ALL") {
+    currentQIdx = 0;
+  } else {
+    const idx = currentQuestions.findIndex(q => q.subject === sub);
+    if (idx !== -1) currentQIdx = idx;
+  }
+  renderQuestion();
+  renderPalette();
 }
 
 function revealPracticeSolution() {

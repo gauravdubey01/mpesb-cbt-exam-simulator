@@ -49,6 +49,11 @@
             <span class="stat-lbl">Offline</span>
           </div>
         </div>
+        <!-- Quick Action Tabs in Hero -->
+        <div class="hero-actions-row">
+          <button id="hero-btn-mocks" class="hero-action-btn active" onclick="switchDashTab('mocks')">📋 70 Full Mock Papers</button>
+          <button id="hero-btn-subjects" class="hero-action-btn" onclick="switchDashTab('subjects')">🎯 Subject Practice Sets</button>
+        </div>
       </section>
 
       <!-- KPI Overview Cards -->
@@ -73,11 +78,11 @@
 
       <!-- Dashboard Tab Navigation -->
       <nav class="nav-tabs">
-        <button class="nav-tab active" onclick="switchDashTab('mocks')">📋 Mock Tests</button>
-        <button class="nav-tab" onclick="switchDashTab('subjects')">🎯 Subjects</button>
-        <button class="nav-tab" onclick="switchDashTab('solutions')">📚 Solutions Hub</button>
-        <button class="nav-tab" onclick="switchDashTab('history')">📊 History</button>
-        <button class="nav-tab" onclick="switchDashTab('bookmarks')">★ Saved</button>
+        <button class="nav-tab active" id="tab-btn-mocks" onclick="switchDashTab('mocks', this)">📋 Mock Tests</button>
+        <button class="nav-tab" id="tab-btn-subjects" onclick="switchDashTab('subjects', this)">🎯 Subject Practice Sets</button>
+        <button class="nav-tab" id="tab-btn-solutions" onclick="switchDashTab('solutions', this)">📚 Solutions Hub</button>
+        <button class="nav-tab" id="tab-btn-history" onclick="switchDashTab('history', this)">📊 History</button>
+        <button class="nav-tab" id="tab-btn-bookmarks" onclick="switchDashTab('bookmarks', this)">★ Saved</button>
       </nav>
 
       <!-- DASH TAB 1: MOCK TESTS -->
@@ -93,20 +98,41 @@
         <div id="shifts-list" class="cards-list"></div>
       </section>
 
-      <!-- DASH TAB 2: SUBJECT PRACTICE -->
+      <!-- DASH TAB 2: SUBJECT-WISE PRACTICE SETS -->
       <section id="tab-subjects" class="dash-tab-content">
-        <div class="subject-count-selector">
-          <label>Questions per session:</label>
-          <div class="btn-group-pill">
-            <button class="pill-btn" onclick="setSubjectCount(10, this)">10</button>
-            <button class="pill-btn" onclick="setSubjectCount(20, this)">20</button>
-            <button class="pill-btn active" onclick="setSubjectCount(25, this)">25</button>
-            <button class="pill-btn" onclick="setSubjectCount(50, this)">50</button>
-            <button class="pill-btn" onclick="setSubjectCount(100, this)">100</button>
-            <button class="pill-btn" onclick="setSubjectCount(200, this)">200</button>
+        <!-- Horizontal Subject Selector Carousel -->
+        <div id="subject-nav-scroll" class="subject-nav-scroll"></div>
+
+        <!-- Subject Overview Card -->
+        <div id="subject-overview-card" class="subject-overview-card">
+          <div>
+            <div id="sub-active-title" class="sub-meta-title">📐 General Mathematics</div>
+            <div id="sub-active-desc" class="sub-meta-desc">70 Official Practice Sets • 1,750 Questions</div>
           </div>
+          <span class="badge-subject" id="sub-active-badge">25 Qs / Set</span>
         </div>
-        <div id="subjects-grid" class="subjects-grid"></div>
+
+        <!-- Quick Shuffle Practice -->
+        <div class="subject-count-selector">
+          <label>⚡ Quick Shuffle:</label>
+          <div class="btn-group-pill">
+            <button class="pill-btn" onclick="setSubjectCount(10, this)">10 Qs</button>
+            <button class="pill-btn" onclick="setSubjectCount(20, this)">20 Qs</button>
+            <button class="pill-btn active" onclick="setSubjectCount(25, this)">25 Qs</button>
+            <button class="pill-btn" onclick="setSubjectCount(50, this)">50 Qs</button>
+            <button class="pill-btn" onclick="setSubjectCount(100, this)">100 Qs</button>
+          </div>
+          <button class="btn btn-primary btn-xs" onclick="startActiveSubjectShuffle()">▶ Start</button>
+        </div>
+
+        <!-- Filter bar for the 70 Practice Sets -->
+        <div class="search-filter-row">
+          <input type="text" id="subject-set-search" class="input-search" placeholder="🔍 Search sets (e.g. Set 01, 15 Mar)..." oninput="filterSubjectSets()">
+        </div>
+
+        <!-- List of 70 Official Subject Practice Sets -->
+        <h3 class="section-title">📝 Official Subject Practice Sets (Set 01 - Set 70)</h3>
+        <div id="subject-sets-list" class="cards-list"></div>
       </section>
 
       <!-- DASH TAB 3: SOLUTIONS HUB (14,000 Qs Search) -->
@@ -149,6 +175,9 @@
           <span id="exam-subject-badge" class="badge-subject">General</span>
           <span id="exam-qno-badge" class="badge-qno">Q. 1 / 200</span>
           <span class="badge-marks">+1.00 Marks</span>
+          <select id="exam-subject-filter" class="select-filter-compact hidden" onchange="filterExamBySubject(this.value)">
+            <option value="ALL">All Subjects</option>
+          </select>
         </div>
         <div id="exam-timer-container" class="exam-timer">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>

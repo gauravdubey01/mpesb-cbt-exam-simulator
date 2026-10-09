@@ -29,6 +29,16 @@ public class AndroidBridge {
     }
 
     @JavascriptInterface
+    public String getShiftSubjectQuestions(int shiftId, String subject) {
+        return dbHelper.getShiftSubjectQuestions(shiftId, subject);
+    }
+
+    @JavascriptInterface
+    public String getSubjectSets(String subject) {
+        return dbHelper.getSubjectSets(subject);
+    }
+
+    @JavascriptInterface
     public String searchQuestions(String query, String subject, int limit) {
         return dbHelper.searchQuestions(query, subject, limit);
     }
